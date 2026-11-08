@@ -367,6 +367,18 @@ async def startup():
     asyncio.ensure_future(beacon())
 
 
+@app.middleware("http")
+async def revalidate_console(request, call_next):
+    # Without Cache-Control, browsers guess a freshness lifetime from Last-Modified and keep serving an
+    # old index.html / app.js after the GUI is updated (e.g. the Help tab never appears). "no-cache"
+    # makes the browser re-check every load; the ETag keeps that check cheap (304 when unchanged).
+    resp = await call_next(request)
+    p = request.url.path
+    if p == "/" or p.startswith(("/gui/", "/docs/")):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/")
 def index():
     return FileResponse(os.path.join(GUI, "index.html"))
