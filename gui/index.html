@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>City Traffic Control</title>
+<link rel="stylesheet" href="/gui/style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo">◉</span> City Traffic Control <small>assignment MVP · local decisions, central planning</small></div>
+  <div class="hstats">
+    <span class="pill" id="pill-cc" title="Browser ↔ control center">CC</span>
+    <span class="pill" id="pill-bench" title="Browser ↔ HIL testbench">Bench</span>
+    <span class="pill" id="pill-mqtt" title="Controllers online at the control center (MQTT, mTLS)">MQTT 0/20</span>
+    <span class="clock" id="utc">--:--:--</span>
+  </div>
+</header>
+
+<nav id="tabs">
+  <button data-tab="demo" class="on">Demo script</button>
+  <button data-tab="city">City</button>
+  <button data-tab="rules">Rules</button>
+  <button data-tab="deploy">Deploy</button>
+  <button data-tab="monitor">Monitor</button>
+  <button data-tab="audit">Audit</button>
+  <button data-tab="time">Time sync</button>
+  <button data-tab="logs">Logs &amp; captures</button>
+  <button data-tab="help" class="helpbtn">? Help &amp; guide</button>
+  <span class="spacer"></span>
+  <label class="ctl">Traffic <input type="range" id="demand" min="0.2" max="2.5" step="0.1" value="1"> <b id="demand-v">×1.0</b></label>
+  <label class="ctl">Center RTT
+    <select id="rtt"><option value="10">10 s (brief)</option><option value="1">1 s (fast demo)</option></select></label>
+  <button class="warn" id="clear-all" title="Clear every injected fault (safety units stay latched until reset)">Clear all faults</button>
+</nav>
+
+<main>
+  <section id="left">
+    <div class="tab on" id="tab-demo"></div>
+
+    <div class="tab" id="tab-city">
+      <div class="cityhead">
+        <div class="legend">
+          <span><i class="dot msg"></i>channel message (3 s)</span>
+          <span><i class="dot forged"></i>forged / replayed</span>
+          <span><i class="dash"></i>PTP master → slave</span>
+          <span><i class="ring ok"></i>actuated</span><span><i class="ring degraded"></i>degraded</span>
+          <span><i class="ring fixed"></i>fixed time</span><span><i class="ring flash"></i>flash</span>
+        </div>
+        <div class="kpis" id="kpis"></div>
+      </div>
+      <div class="cityrow"><canvas id="world"></canvas>
+        <div class="zoomcol"><div class="ztitle" id="ztitle">Close-up</div><canvas id="zoom"></canvas><div id="zfeed" class="zfeed"></div></div></div>
+      <div class="hint">Click an intersection to open its cabinet. Lamps shown are the <b>field outputs</b> after the safety unit; vehicles obey them.</div>
+    </div>
+
+    <div class="tab" id="tab-rules">
+      <div class="row">
+        <label>Intersection <select id="r-tsc"></select></label>
+        <span id="r-up" class="muted"></span>
+        <span class="spacer"></span>
+        <label>Engineer <select id="r-author"></select></label>
+        <button id="r-text-toggle">Show stored text</button>
+      </div>
+      <div id="r-table"></div>
+      <div class="row">
+        <button id="r-add">+ Rule</button>
+        <input id="r-msg" placeholder="Commit message (why this change?)" style="flex:1">
+        <button class="primary" id="r-save">Save &amp; commit</button>
+      </div>
+      <pre id="r-text" class="code hidden"></pre>
+      <div id="r-result"></div>
+      <div class="grid2">
+        <div class="card"><h3>Validate</h3>
+          <p class="muted">Channel budget, buffer load M×(N+1) ≤ 10, deadlines (2 s / 5 s), current-cycle use, conflicts, fallbacks — for all 20 controllers.</p>
+          <button class="primary" id="v-run">Validate all</button><div id="v-out"></div></div>
+        <div class="card"><h3>Replay</h3>
+          <p class="muted">Run the working-copy rules on recorded inputs of this intersection; compare with what the controller decided.</p>
+          <button id="rp-run">Replay recorded cycles</button><div id="rp-out"></div></div>
+      </div>
+      <div class="card"><h3>Release (two-person rule)</h3>
+        <div class="row"><label>Author <select id="rel-author"></select></label>
+        <label>Approver <select id="rel-approver"></select></label>
+        <input id="rel-note" placeholder="Release note" style="flex:1">
+        <button class="primary" id="rel-run">Compile, sign &amp; release</button></div>
+        <div id="rel-out"></div></div>
+      <div class="card"><h3>Git history <small id="h-scope"></small></h3><div id="r-hist"></div></div>
+    </div>
+
+    <div class="tab" id="tab-deploy">
+      <div class="card"><h3>Releases</h3><div id="d-rel"></div></div>
+      <div class="card"><h3>Active configuration per controller <small>(from health telemetry — up to 5 s old)</small></h3><div id="d-grid" class="tiles"></div>
+        <div class="row"><input id="rb-targets" placeholder="Rollback targets e.g. 17,18"><button id="rb-run">Roll back (signed command)</button><span id="rb-out" class="muted"></span></div></div>
+      <div class="card"><h3>Deployments</h3><div id="d-deps"></div></div>
+    </div>
+
+    <div class="tab" id="tab-monitor">
+      <div class="card"><h3>Fleet health <small>— what the control center knows, via MQTT over a 10 s round-trip link</small></h3><div id="m-table" class="scrollx"></div></div>
+      <div class="card"><h3>Alarms</h3><div id="m-alarms" class="alarms"></div></div>
+    </div>
+
+    <div class="tab" id="tab-audit">
+      <div class="row"><label>Intersection <select id="a-tsc"><option value="0">all</option></select></label>
+        <button id="a-refresh">Refresh</button><span class="muted">Records are written on the controller, hash-chained, and uploaded when the center link is up.</span></div>
+      <div class="grid2">
+        <div class="card"><h3>Decision records</h3><div id="a-list" class="list"></div></div>
+        <div class="card"><h3>Trace</h3><div id="a-trace" class="muted">Select a record: “why did I17 extend green at 08:13?”</div></div>
+      </div>
+    </div>
+
+    <div class="tab" id="tab-time">
+      <div class="card"><h3>Actual clock error per controller <small>(bench truth vs. true UTC; target: neighbours within 100 ms)</small></h3>
+        <canvas id="t-chart" height="260"></canvas>
+        <div class="row"><label>Scale <select id="t-scale"><option value="1">±1 ms</option><option value="10">±10 ms</option><option value="200" selected>±200 ms</option><option value="5000">±5 s</option></select></label>
+        <span class="muted">Tier 1 GNSS 1PPS · Tier 2 PTP (IEEE 1588 two-step, peer network) · Tier 3 TCXO holdover (2 ppm ≈ 14 h within 100 ms). The center never sets clocks.</span></div></div>
+      <div class="card"><h3>Synchronisation state</h3><div id="t-table" class="scrollx"></div></div>
+    </div>
+
+    <div class="tab" id="tab-help">
+      <div class="helpgrid">
+        <nav id="h-toc" class="toc"></nav>
+        <div class="helpmain">
+          <div class="card"><h3>Running processes — live <small>read from /proc by the control center every 2 s (<code>GET /api/system</code>)</small></h3>
+            <div id="h-procs" class="muted">loading…</div></div>
+          <article id="h-doc" class="doc">loading the guide…</article>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab" id="tab-logs">
+      <div class="row"><label>Stream <select id="l-stream"></select></label>
+        <label><input type="checkbox" id="l-follow" checked> follow</label><input id="l-filter" placeholder="filter (e.g. RULE, PTP, ALARM)">
+        <button id="l-clear">Clear</button></div>
+      <pre id="l-out" class="code log"></pre>
+      <div class="card"><h3>Packet captures (open in Wireshark)</h3><div id="l-pcaps"></div></div>
+    </div>
+  </section>
+
+  <aside id="right">
+    <div id="cab"></div>
+  </aside>
+</main>
+<footer id="ticker"></footer>
+<script src="/gui/app.js"></script>
+</body>
+</html>

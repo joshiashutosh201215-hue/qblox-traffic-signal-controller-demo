@@ -1,0 +1,6 @@
+# Control center, testbench and tools (Python 3.12 tested). paho-mqtt is fetched into third_party/py by setup.
+fastapi>=0.110
+uvicorn>=0.29
+websockets>=12
+cryptography>=41
+markdown>=3.5

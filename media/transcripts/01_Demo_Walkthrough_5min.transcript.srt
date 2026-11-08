@@ -1,0 +1,195 @@
+1
+00:00:00,058 --> 00:00:07,012
+A five-minute black-box tour of the traffic signal control prototype, built from the architecture in the assignment answer.
+
+2
+00:00:07,491 --> 00:00:12,356
+Decide locally on current, synchronised data. Plan, validate and observe centrally.
+
+3
+00:00:13,614 --> 00:00:20,743
+Twenty intersections, each a real C++ controller process with its own independent safety unit, written in C.
+
+4
+00:00:21,218 --> 00:00:27,232
+A hardware-in-the-loop bench simulates the street and detectors. Vehicles obey the lamps after the safety unit.
+
+5
+00:00:27,685 --> 00:00:32,422
+A shared forty-second cycle, offset per column, gives the green wave on the main road.
+
+6
+00:00:32,913 --> 00:00:39,740
+Blue dots are authenticated channel messages on the peer Ethernet: eight detector readings per controller, once per cycle.
+
+7
+00:00:40,221 --> 00:00:49,869
+Dashed lines are PTP links where there is no GNSS sky view. All twenty controllers are online at the center, over MQTT with mutual TLS.
+
+8
+00:00:50,322 --> 00:00:56,313
+Intersection seventeen's cabinet: signal heads, then the controller's mode, phase and cycle position.
+
+9
+00:00:56,767 --> 00:01:04,139
+It samples at thirteen seconds and decides at fourteen whether to extend green. Zero C++ heap allocations after start-up.
+
+10
+00:01:04,665 --> 00:01:10,052
+Two CANopen cards serve eight loops: stop bars, and exits for queue and gridlock detection.
+
+11
+00:01:10,504 --> 00:01:17,203
+Then time hardware, peer channels with sequence numbers, and the MQTT link with its store-and-forward backlog.
+
+12
+00:01:17,661 --> 00:01:21,307
+Every decision becomes a hash-chained record, uploaded to the center.
+
+13
+00:01:21,759 --> 00:01:31,639
+Intersection thirteen extended green by six seconds: rule R13-02 fired because upstream intersection eight saw a short gap. A platoon is coming.
+
+14
+00:01:32,094 --> 00:01:39,780
+The trace shows every input with sample time, sequence and age, the deadline, the release, the Git commit, and the intact hash chain.
+
+15
+00:01:40,232 --> 00:01:47,616
+Amber and all-red are fixed, an empty side street is skipped, and a gridlock rule holds instead of extending when the exit is blocked.
+
+16
+00:01:48,069 --> 00:01:53,224
+Faults. Cut loop one at intersection seventeen, and its CANopen card sends an emergency frame.
+
+17
+00:01:53,677 --> 00:02:00,086
+Only the rule using that reading falls back to its if-missing action; the others keep working, and an alarm goes to the center.
+
+18
+00:02:00,580 --> 00:02:03,691
+A failed side-street detector counts as permanent demand.
+
+19
+00:02:04,182 --> 00:02:09,964
+Intersection sixteen loses power. Without a watchdog signal, its safety unit flashes it within a second.
+
+20
+00:02:10,467 --> 00:02:15,912
+Seventeen detects the silent neighbour by itself, from the missing messages. No center involved.
+
+21
+00:02:16,381 --> 00:02:21,188
+Its upstream rule falls back to no extension: background timing, degraded mode.
+
+22
+00:02:21,663 --> 00:02:26,133
+Lose its own stop-bar detectors as well, and it runs a full local fixed-time plan.
+
+23
+00:02:26,622 --> 00:02:29,583
+Fixed time: safe, and still serving every approach.
+
+24
+00:02:30,049 --> 00:02:39,650
+Time has three tiers: GNSS pulse per second, IEEE 1588 PTP from a neighbour, then holdover on the temperature-compensated crystal.
+
+25
+00:02:40,103 --> 00:02:44,921
+GNSS off at intersection twelve: it becomes a PTP slave.
+
+26
+00:02:45,377 --> 00:02:52,157
+PTP off too: holdover. A two ppm crystal stays within a hundred milliseconds for almost fourteen hours.
+
+27
+00:02:52,630 --> 00:03:00,246
+A GNSS spoof of eight hundred milliseconds at intersection seven is rejected, because its PTP peer disagrees.
+
+28
+00:03:00,700 --> 00:03:05,623
+The center only estimates clocks, to plus or minus five seconds. It never sets them.
+
+29
+00:03:06,076 --> 00:03:08,340
+Now every link to the control center goes down.
+
+30
+00:03:08,812 --> 00:03:15,209
+The broker publishes each controller's last will. On the street, nothing changes: the center is never in the decision path.
+
+31
+00:03:15,688 --> 00:03:19,519
+Records queue on flash, and upload later with their original timestamps.
+
+32
+00:03:19,987 --> 00:03:23,807
+A software bug at intersection nine commands conflicting greens.
+
+33
+00:03:24,295 --> 00:03:31,458
+The independent safety unit, watching the real lamp outputs, caught it within a hundred and fifty milliseconds and latched flashing.
+
+34
+00:03:31,940 --> 00:03:38,593
+It also checks multiple indications, dark heads, short ambers and the watchdog. Only a technician reset releases it.
+
+35
+00:03:39,059 --> 00:03:48,684
+A forged and a replayed message on channel sixteen, the red dots: the AES-CMAC exposes the forgery, the sequence number the replay. Both are dropped.
+
+36
+00:03:49,138 --> 00:03:54,095
+Rules are data, not code: a table, with an if-missing fallback on every rule.
+
+37
+00:03:54,585 --> 00:04:01,818
+R17-01 now extends at twenty percent occupancy instead of twenty-five, by five seconds instead of four.
+
+38
+00:04:02,273 --> 00:04:06,220
+Saving commits readable rule text to Git, under the engineer's name.
+
+39
+00:04:06,694 --> 00:04:15,343
+Validation checks all twenty controllers: interpreter bounds, extension limits, buffer load, deadlines, current-cycle data and channel budget.
+
+40
+00:04:15,795 --> 00:04:18,581
+Replay shows which recorded decisions the edit would change.
+
+41
+00:04:19,076 --> 00:04:21,317
+Approving your own release is refused.
+
+42
+00:04:23,191 --> 00:04:29,112
+A second engineer approves; the rules compile to a binary table, signed with Ed25519.
+
+43
+00:04:29,567 --> 00:04:35,453
+Deployment stages it in the inactive flash slot; the controller verifies the signature and acknowledges.
+
+44
+00:04:35,956 --> 00:04:43,537
+One signed activation command sets a common time; each controller switches at its next cycle boundary, on its synchronised clock.
+
+45
+00:04:43,992 --> 00:04:49,135
+Seventeen now runs version two from slot B; version one stays in slot A for rollback.
+
+46
+00:04:49,589 --> 00:04:59,167
+The monitor shows what the center knows: mode, sync, detectors, neighbours, buffers, security, configuration and safety state, plus every alarm.
+
+47
+00:04:59,713 --> 00:05:09,210
+Every protocol is real and capturable: logs, CAN dumps, NMEA, the broker log, and Wireshark captures of PTP and channel traffic.
+
+48
+00:05:09,663 --> 00:05:15,631
+A self-test injects all of these faults automatically: thirty-seven of thirty-seven checks pass.
+
+49
+00:05:16,083 --> 00:05:22,805
+Only the street, CAN wiring, network switch and clock hardware are simulated. The rest is the real software of the design.

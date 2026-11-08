@@ -1,0 +1,279 @@
+1
+00:00:00,600 --> 00:00:09,087
+This is the code walkthrough of the traffic signal control prototype: where each part of the design is implemented, and why these technologies were chosen.
+
+2
+00:00:10,137 --> 00:00:14,398
+The repository mirrors the architecture: one folder per box in the design.
+
+3
+00:00:14,848 --> 00:00:21,326
+controller holds the C++17 intersection controller, and mmu the independent safety unit, in C.
+
+4
+00:00:21,776 --> 00:00:29,764
+control_center is the Python back office. common holds the city model, the rule language and the wire formats, shared by the center and the bench.
+
+5
+00:00:30,214 --> 00:00:37,586
+testbench is the hardware-in-the-loop rig, and gui the browser console. demo.sh builds, starts and tests everything.
+
+6
+00:00:38,036 --> 00:00:48,067
+At run time that is forty-three processes: twenty controllers, twenty safety units, the broker, the control center and the bench, talking real protocols over local sockets.
+
+7
+00:00:49,117 --> 00:00:52,797
+The technology choices follow the technology table in the answer.
+
+8
+00:00:53,247 --> 00:01:04,195
+Controllers use restricted C++17: no exceptions, no RTTI, and no heap after start-up, so timing and memory are predictable on a small embedded target.
+
+9
+00:01:04,645 --> 00:01:13,399
+The safety unit is a separate C program that shares no code with the controller. It is small enough to review line by line, and a bug in one cannot hide in the other.
+
+10
+00:01:13,849 --> 00:01:22,139
+The control center is Python with FastAPI: a standard Linux server, quick to change, where the validator and the replay use the same rule code.
+
+11
+00:01:22,589 --> 00:01:33,409
+The center link is MQTT over mutual TLS. Controllers connect outbound only, quality-of-service one gives store-and-forward, and the last will reports a lost controller without polling.
+
+12
+00:01:33,859 --> 00:01:46,142
+Peers exchange one small authenticated message per cycle. Time, detectors, cryptography, rules and audit use standard parts: PTP, CANopen, OpenSSL, Git and SQLite.
+
+13
+00:01:47,192 --> 00:01:56,492
+main.cpp is the controller's entry point. It replaces the global operator new with a counter, so any C++ heap allocation after start-up is counted.
+
+14
+00:01:56,942 --> 00:02:07,310
+Start-up builds everything from static storage, starts a two-second watchdog, and then freezes the heap. The cabinet view shows the counter, and the self-test asserts it stays zero.
+
+15
+00:02:08,360 --> 00:02:17,427
+The main loop is a ten-millisecond cyclic executive standing in for the RTOS: one poll over all sockets, then every service ticks in a fixed order.
+
+16
+00:02:17,877 --> 00:02:26,759
+Time first, then detectors, messaging and the phase controller. Lamp commands go to the safety unit with a toggling watchdog bit, at least every hundred milliseconds.
+
+17
+00:02:27,209 --> 00:02:35,092
+The loop also kicks a software watchdog. If it ever hangs, the process exits, and the safety unit sees the toggle stop and goes to flash.
+
+18
+00:02:36,142 --> 00:02:51,003
+hal.hpp hides every device: oscillator, GNSS receiver, peer network card, platform buffer, CAN bus, lamp outputs, flash, crypto and watchdog. The controller only sees time through its own drifting crystal.
+
+19
+00:02:51,453 --> 00:03:00,195
+The platform buffer reproduces a fact from the brief: ten slots, and a silent drop when full. Losses can only be found higher up, from sequence numbers.
+
+20
+00:03:00,645 --> 00:03:09,921
+CAN frames use the Linux can_frame layout, carried over UDP because a virtual CAN interface needs root. A real SocketCAN port would change only this class.
+
+21
+00:03:10,971 --> 00:03:22,000
+detector_service.cpp speaks CANopen to the two detector cards. A heartbeat proves a card is alive; a card that boots or is pre-operational gets an NMT start command.
+
+22
+00:03:22,450 --> 00:03:25,875
+TPDO1 carries the presence bitmap of four loops.
+
+23
+00:03:26,325 --> 00:03:37,633
+An emergency frame marks a loop open or shorted. The reading becomes invalid, and every rule that uses that detector takes its fallback. Missing heartbeats make the card silent after one and a half seconds.
+
+24
+00:03:38,683 --> 00:03:48,749
+message_service.cpp handles the 104-byte channel messages. Each one is checked in order. The schema version first, so older controllers ignore newer device types.
+
+25
+00:03:49,199 --> 00:03:53,750
+Then the AES-CMAC: a forged message is dropped and raises an alarm.
+
+26
+00:03:54,200 --> 00:04:01,630
+Then the sequence number. Not newer means a replay. A gap means lost messages, for example from the platform buffer, which never reports it.
+
+27
+00:04:02,680 --> 00:04:09,809
+lookup decides whether an upstream reading may be used in this cycle, and every refusal carries a written reason into the decision record.
+
+28
+00:04:10,259 --> 00:04:17,411
+A silent neighbour, or one that came back but has not yet had two good cycles, counts as missing. That hysteresis prevents flapping.
+
+29
+00:04:17,861 --> 00:04:26,499
+The key rule of the answer: the reading must be sampled after this controller's cycle started. Otherwise the controller waits, within a bound, and then applies the rule's fallback.
+
+30
+00:04:26,949 --> 00:04:35,807
+Finally, the sender's clock must be synchronised, and the arrival must match the expected delivery time. That catches a sender or receiver whose clock has drifted.
+
+31
+00:04:36,857 --> 00:04:45,623
+time_service.cpp implements the hierarchy: GNSS first, PTP from a neighbour second, and the crystal in holdover third.
+
+32
+00:04:46,073 --> 00:04:53,654
+The clock may be stepped only once, at start-up, before actuated control begins. After that it is slewed, so the cycle never jumps.
+
+33
+00:04:54,104 --> 00:05:05,459
+If GNSS jumps while a PTP peer agrees with the local clock, GNSS is rejected as spoofed. Without a peer, a jump is accepted only after ten consistent readings.
+
+34
+00:05:05,909 --> 00:05:18,111
+Corrections come from a PI servo, with lower gains for PTP because software timestamps are noisier. The PTP messages follow IEEE 1588 two-step, with a simplified best-master selection.
+
+35
+00:05:19,161 --> 00:05:26,057
+phase_controller.cpp runs the signal phases and makes one decision per cycle, at the end of the minimum main green.
+
+36
+00:05:26,507 --> 00:05:34,344
+First, are the local detectors good enough? With both cards silent, or three of four stop-bar loops failed, it runs the local fixed-time plan.
+
+37
+00:05:34,794 --> 00:05:43,815
+Otherwise it looks up every input the rules need. If an upstream reading is still in flight, it holds the green for at most two and a half seconds, then declares the input missing.
+
+38
+00:05:44,265 --> 00:05:50,163
+The interpreter evaluates, any missing input sets degraded mode, and the decision is written as a record.
+
+39
+00:05:51,213 --> 00:06:01,453
+rule_interpreter.cpp is deliberately small. Rules arrive compiled and sorted by priority, at most sixteen rules of three conditions, so evaluation time is bounded.
+
+40
+00:06:01,903 --> 00:06:10,367
+A rule fires when all its conditions hold. If any input is missing, the rule's declared if-missing action applies instead. That is the per-rule fallback.
+
+41
+00:06:10,817 --> 00:06:18,921
+The arbiter takes the highest-priority rule that wants an action, and caps the extension at eight seconds, so the side street keeps its minimum green.
+
+42
+00:06:19,371 --> 00:06:27,870
+The center's Python evaluator must give identical answers: four hundred shared test vectors run against both, and replay compares them on recorded cycles.
+
+43
+00:06:28,920 --> 00:06:41,180
+config_store.cpp manages two flash slots, A and B. A staged configuration must parse, carry a valid Ed25519 signature, and be newer than the active one, which blocks rollback attacks.
+
+44
+00:06:41,630 --> 00:06:50,779
+It is written to the inactive slot. A separate signed command names an activation time, and the switch happens at the first cycle boundary after it, so neighbours change together.
+
+45
+00:06:51,229 --> 00:07:00,807
+The recorder appends each decision as a JSON line, with its own SHA-256 and the previous record's hash, so any edit or gap is visible at the center.
+
+46
+00:07:01,857 --> 00:07:09,299
+center_agent.cpp is the controller's MQTT client: libmosquitto, with the controller's own certificate and key.
+
+47
+00:07:09,749 --> 00:07:19,768
+Its last will publishes offline if the connection drops. Health goes out every two seconds; alarms and records use quality-of-service one, and records stay on flash until acknowledged.
+
+48
+00:07:20,218 --> 00:07:28,078
+The broker requires client certificates and takes the user name from the certificate. The access list lets each controller write only its own topics.
+
+49
+00:07:29,128 --> 00:07:34,875
+mmu.c is the independent safety unit. It sees the lamp outputs, not the controller's intentions.
+
+50
+00:07:35,325 --> 00:07:44,114
+If the controller's watchdog toggle stops for one second, it latches flash. Flash transfer disconnects the load switches, so even a welded output goes dark.
+
+51
+00:07:44,564 --> 00:07:53,155
+It flags conflicting greens or ambers held for a hundred and fifty milliseconds, multiple indications, dark heads, and clearances shorter than the minimum amber.
+
+52
+00:07:53,605 --> 00:07:57,494
+Every fault latches until a technician reset. The controller cannot clear it.
+
+53
+00:07:58,544 --> 00:08:08,412
+On the center side, common/rules.py defines the rule language: one readable block per rule, with conditions, an action, an if-missing fallback, and a priority.
+
+54
+00:08:08,862 --> 00:08:19,195
+The validator proves the limits from the answer for all twenty controllers before anything is released. Buffer load: messages per cycle, times N plus one, must fit in ten slots.
+
+55
+00:08:19,645 --> 00:08:29,490
+Deadline: one decision per cycle; five seconds if any rule needs an upstream reading, otherwise two. And each upstream reading must be sampled within the receiver's current cycle.
+
+56
+00:08:30,540 --> 00:08:38,574
+release.py enforces the two-person rule: the approver must be a different engineer. The rules must validate, and the working copy must be committed.
+
+57
+00:08:39,024 --> 00:08:49,160
+Each controller's table is compiled and signed with Ed25519; the key file stands in for an HSM. Activation and rollback commands are signed the same way.
+
+58
+00:08:50,210 --> 00:08:58,778
+server.py orchestrates a deployment: stage everywhere, wait for every acknowledgement, and abort without activating anything if one controller rejects.
+
+59
+00:08:59,228 --> 00:09:05,451
+Only then does it send one activation time to all targets, with a twenty-second lead to cover the ten-second link.
+
+60
+00:09:05,901 --> 00:09:13,308
+Uploaded records are hash-checked and chain-checked into SQLite, and the trace view explains each decision from the record, the release and Git.
+
+61
+00:09:14,358 --> 00:09:25,666
+The testbench replaces the field. net.py is the peer switch: it delivers channel messages after the brief's one and three seconds, and mirrors every frame to a pcap file, like a SPAN port.
+
+62
+00:09:26,116 --> 00:09:34,789
+plant.py moves vehicles with the intelligent driver model and generates loop occupancy; its detector cards are CANopen nodes on each cabinet bus.
+
+63
+00:09:35,239 --> 00:09:47,046
+bench.py supervises all processes, emulates the WAN with five seconds each way, and injects every fault. The GUI shows both views: what the center knows over MQTT, and the truth inside the cabinets.
+
+64
+00:09:48,096 --> 00:09:55,190
+Tests come in three layers: crypto against RFC vectors, four hundred shared rule vectors, and an end-to-end self-test.
+
+65
+00:09:55,640 --> 00:10:05,706
+The self-test drives the live system through thirty-seven checks: synchronisation, faults, security, the center outage, release, deployment, hash chains and deadlines.
+
+66
+00:10:06,156 --> 00:10:15,351
+It found real defects: a SIGPIPE that killed controllers when the center link dropped, a hash-chain recovery bug after reboot, and records lost while the center was down.
+
+67
+00:10:15,801 --> 00:10:25,124
+It also confirmed the review of the original proposal: with previous-cycle data and a buffer emptied every fourth cycle, messages are lost and deadlines are missed.
+
+68
+00:10:26,174 --> 00:10:39,920
+To be clear about the limits: the street, the CAN wiring, the switch, the GNSS receiver and the crystal are simulated, and PTP uses software timestamps, so it is accurate to about a millisecond, not sub-microsecond.
+
+69
+00:10:40,370 --> 00:10:48,381
+The RTOS is a cyclic executive on Linux, and the HSM is a protected key file. No conformance to traffic standards is claimed.
+
+70
+00:10:48,831 --> 00:10:55,309
+Each of these sits behind one HAL class or one bench module, so real hardware replaces those parts and keeps the rest. demo.sh start runs it all, and demo.sh test reproduces every result shown.
